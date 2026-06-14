@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CoinDCX Futures Scanner</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: #0a0e1a; color: #e2e8f0; min-height: 100vh; }
+.header { background: #0f1729; border-bottom: 1px solid #1e2d4a; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.logo { font-size: 18px; font-weight: bold; color: #00e5ff; }
+.logo span { font-size: 12px; color: #64748b; display: block; margin-top: 2px; }
+.status-pill { display: flex; align-items: center; gap: 6px; background: rgba(0,230,118,0.08); border: 1px solid rgba(0,230,118,0.2); padding: 5px 12px; border-radius: 20px; font-size: 12px; color: #00e676; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #888; }
+.dot.live { background: #00e676; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
+.controls { background: #0f1729; padding: 12px 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid #1e2d4a; }
+.tf-group { display: flex; gap: 4px; background: #0a0e1a; padding: 3px; border-radius: 8px; border: 1px solid #1e2d4a; }
+.tf-btn { padding: 6px 14px; border-radius: 6px; border: none; background: transparent; color: #64748b; font-size: 13px; font-weight: bold; cursor: pointer; }
+.tf-btn.active { background: #1e40af; color: #fff; }
+.scan-btn { padding: 7px 18px; background: #00e5ff; border: none; border-radius: 8px; color: #000; font-weight: bold; font-size: 13px; cursor: pointer; }
+.scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.filter-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.tag { background: rgba(255,109,0,0.1); border: 1px solid rgba(255,109,0,0.3); color: #ff6d00; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 1px; background: #1e2d4a; border-bottom: 1px solid #1e2d4a; }
+.stat { background: #0f1729; padding: 12px 16px; text-align: center; }
+.stat-val { font-size: 22px; font-weight: bold; color: #00e5ff; }
+.stat-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
+.countdown { font-size: 12px; color: #64748b; }
+.countdown span { color: #00e5ff; font-weight: bold; }
+.table-wrap { padding: 16px 20px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 600px; }
+thead th { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; padding: 8px 12px; text-align: left; background: #0f1729; border-bottom: 1px solid #1e2d4a; }
+tbody tr { border-bottom: 1px solid #1a2540; transition: background 0.15s; }
+tbody tr:hover { background: #162040; }
+tbody td { padding: 10px 12px; font-size: 13px; }
+.coin-name { font-weight: bold; font-size: 14px; color: #e2e8f0; }
+.coin-sub { font-size: 10px; color: #64748b; }
+.price { font-family: monospace; font-size: 13px; }
+.change-up { color: #00e676; font-weight: bold; }
+.rvol-hot { background: rgba(255,61,90,0.15); border: 1px solid rgba(255,61,90,0.3); color: #ff3d5a; padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: bold; }
+.rvol-warm { background: rgba(255,214,0,0.1); border: 1px solid rgba(255,214,0,0.25); color: #ffd600; padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: bold; }
+.rvol-ok { background: rgba(0,230,118,0.1); border: 1px solid rgba(0,230,118,0.25); color: #00e676; padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: bold; }
+.empty { text-align: center; padding: 50px 20px; color: #64748b; }
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+.error-box { margin: 12px 20px; padding: 10px 14px; background: rgba(255,61,90,0.08); border: 1px solid rgba(255,61,90,0.2); border-radius: 8px; color: #ff3d5a; font-size: 13px; display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    CoinDCX Futures Scanner
+    <span>RVOL &ge; 15x &nbsp;|&nbsp; Value &ge; $1,20,000 USDT &nbsp;|&nbsp; Price UP</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div class="countdown">Next scan: <span id="cd">60</span>s</div>
+    <div class="status-pill"><div class="dot" id="dot"></div><span id="stTxt">Starting</span></div>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="tf-group">
+    <button class="tf-btn active" onclick="setTF('1m')" id="b1m">1m</button>
+    <button class="tf-btn" onclick="setTF('15m')" id="b15m">15m</button>
+    <button class="tf-btn" onclick="setTF('30m')" id="b30m">30m</button>
+  </div>
+  <button class="scan-btn" onclick="runScan()" id="scanBtn">Scan Now</button>
+  <div class="filter-tags">
+    <span class="tag">RVOL &ge; 15x</span>
+    <span class="tag">Value &ge; $1.2L USDT</span>
+    <span class="tag">Price UP</span>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="stat-val" id="sTotal">—</div><div class="stat-label">Pairs Scanned</div></div>
+  <div class="stat"><div class="stat-val" id="sHits" style="color:#00e676">—</div><div class="stat-label">Signals Found</div></div>
+  <div class="stat"><div class="stat-val" id="sRvol" style="color:#ffd600">—</div><div class="stat-label">Top RVOL</div></div>
+  <div class="stat"><div class="stat-val" id="sTime" style="font-size:15px">—</div><div class="stat-label">Last Scan</div></div>
+</div>
+
+<div class="error-box" id="errBox"></div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Coin</th>
+        <th>Price (USDT)</th>
+        <th>Change %</th>
+        <th>Rel. Volume</th>
+        <th>Vol Value (USDT)</th>
+        <th>Vol Value (INR)</th>
+      </tr>
+    </thead>
+    <tbody id="tBody">
+      <tr><td colspan="6"><div class="empty"><div class="empty-icon">⏳</div><div>Starting scanner...</div></div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+const RVOL_MIN = 15;
+const VAL_MIN = 120000;
+const AVG_CANDLES = 20;
+const SCAN_SEC = 60;
+let tf = '1m', scanning = false, cdVal = SCAN_SEC, timer = null, results = [];
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+function setTF(t){
+  tf = t;
+  ['1m','15m','30m'].forEach(x=>{
+    const b = document.getElementById('b'+x);
+    b.classList.toggle('active', x===t);
+  });
+  runScan();
+}
+
+function startTimer(){
+  clearInterval(timer);
+  cdVal = SCAN_SEC;
+  timer = setInterval(()=>{
+    cdVal--;
+    document.getElementById('cd').textContent = cdVal;
+    if(cdVal<=0){ cdVal=SCAN_SEC; runScan(); }
+  },1000);
+}
+
+async function runScan(){
+  if(scanning) return;
+  scanning = true;
+  document.getElementById('scanBtn').disabled = true;
+  setStatus('Scanning...','#ffd600', false);
+  hideErr();
+  showLoading();
+  try {
+    const pairs = await getPairs();
+    const signals = await getSignals(pairs);
+    results = signals;
+    renderTable(signals, pairs.length);
+  } catch(e){
+    showErr('Error: '+e.message+'. Please check your internet connection.');
+    showEmpty('Scan failed. Try clicking Scan Now again.');
+  }
+  scanning = false;
+  document.getElementById('scanBtn').disabled = false;
+  document.getElementById('sTime').textContent = new Date().toLocaleTimeString('en-IN');
+  setStatus('Live','#00e676', true);
+  startTimer();
+}
+
+async function getPairs(){
+  const r = await fetch('https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments');
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const data = await r.json();
+  const seen = new Set();
+  const pairs = [];
+  data.forEach(p=>{
+    const sym = p.pair||p.symbol||'';
+    if(sym.endsWith('USDT') && !seen.has(sym) && (!p.expiry_date||p.contract_type==='perpetual'||p.instrument_type==='perpetual')){
+      seen.add(sym); pairs.push(sym);
+    }
+  });
+  return pairs;
+}
+
+async function getSignals(pairs){
+  const signals = [];
+  const BSZ = 8;
+  for(let i=0;i<pairs.length;i+=BSZ){
+    const chunk = pairs.slice(i,i+BSZ);
+    const res = await Promise.allSettled(chunk.map(p=>checkPair(p)));
+    res.forEach(r=>{ if(r.status==='fulfilled'&&r.value) signals.push(r.value); });
+    document.getElementById('sTotal').textContent = Math.min(i+BSZ, pairs.length)+'/'+pairs.length;
+    if(i+BSZ<pairs.length) await sleep(200);
+  }
+  return signals.sort((a,b)=>b.rvol-a.rvol);
+}
+
+async function checkPair(pair){
+  try {
+    const url = `https://public.coindcx.com/market_data/candles?pair=${encodeURIComponent(pair)}&interval=${tf}&limit=${AVG_CANDLES+5}`;
+    const r = await fetch(url);
+    if(!r.ok) return null;
+    const candles = await r.json();
+    if(!candles||candles.length<AVG_CANDLES+1) return null;
+    const latest = candles[candles.length-1];
+    const past = candles.slice(-AVG_CANDLES-1,-1);
+    const gv = c=>parseFloat(c[5]||c.volume||0);
+    const curVol = gv(latest);
+    const avgVol = past.reduce((s,c)=>s+gv(c),0)/past.length;
+    if(avgVol===0) return null;
+    const rvol = curVol/avgVol;
+    const open = parseFloat(latest[1]||latest.open||0);
+    const close = parseFloat(latest[4]||latest.close||0);
+    const change = open>0?((close-open)/open)*100:0;
+    const volVal = curVol*close;
+    if(rvol<RVOL_MIN||volVal<VAL_MIN||change<=0) return null;
+    const symbol = pair.replace(/USDT.*$/,'').replace(/[_-]/g,'');
+    return { symbol, price:close, change, rvol, volVal, volume:curVol };
+  } catch(e){ return null; }
+}
+
+function renderTable(data, total){
+  document.getElementById('sTotal').textContent = total;
+  document.getElementById('sHits').textContent = data.length;
+  document.getElementById('sRvol').textContent = data.length ? data[0].rvol.toFixed(1)+'x' : '—';
+  if(!data.length){ showEmpty('No signals right now. Market may be calm. Auto-scanning every 60s.'); return; }
+  document.getElementById('tBody').innerHTML = data.map(r=>{
+    const rClass = r.rvol>=30?'rvol-hot':r.rvol>=20?'rvol-warm':'rvol-ok';
+    const inr = (r.volVal*83/1e7).toFixed(2);
+    return `<tr>
+      <td><div class="coin-name">${r.symbol}</div><div class="coin-sub">USDT PERP</div></td>
+      <td class="price">${fmtP(r.price)}</td>
+      <td class="change-up">+${r.change.toFixed(2)}%</td>
+      <td><span class="${rClass}">${r.rvol.toFixed(1)}x</span></td>
+      <td>$${fmtL(r.volVal)}</td>
+      <td>&#8377;${inr} Cr</td>
+    </tr>`;
+  }).join('');
+}
+
+function fmtP(p){ if(p>=1000)return p.toLocaleString('en-US',{maximumFractionDigits:2}); if(p>=1)return p.toFixed(4); if(p>=0.001)return p.toFixed(6); return p.toFixed(8); }
+function fmtL(n){ if(n>=1e9)return(n/1e9).toFixed(2)+'B'; if(n>=1e6)return(n/1e6).toFixed(2)+'M'; if(n>=1e3)return(n/1e3).toFixed(2)+'K'; return n.toFixed(2); }
+function setStatus(t,c,live){ document.getElementById('stTxt').textContent=t; const d=document.getElementById('dot'); d.style.background=c; d.className='dot'+(live?' live':''); }
+function showLoading(){ document.getElementById('tBody').innerHTML=`<tr><td colspan="6"><div class="empty"><div class="empty-icon">⏳</div><div>Scanning ${tf} candles for all futures pairs...</div></div></td></tr>`; }
+function showEmpty(m){ document.getElementById('tBody').innerHTML=`<tr><td colspan="6"><div class="empty"><div class="empty-icon">📭</div><div>${m}</div></div></td></tr>`; }
+function showErr(m){ const b=document.getElementById('errBox'); b.textContent=m; b.style.display='block'; }
+function hideErr(){ document.getElementById('errBox').style.display='none'; }
+
+runScan();
+</script>
+</body>
+</html>
