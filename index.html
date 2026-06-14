@@ -44,6 +44,8 @@ tbody td { padding: 10px 12px; font-size: 13px; }
 .empty { text-align: center; padding: 50px 20px; color: #64748b; }
 .empty-icon { font-size: 40px; margin-bottom: 12px; }
 .error-box { margin: 12px 20px; padding: 10px 14px; background: rgba(255,61,90,0.08); border: 1px solid rgba(255,61,90,0.2); border-radius: 8px; color: #ff3d5a; font-size: 13px; display: none; }
+.backend-info { text-align: center; padding: 6px; background: #0f1729; font-size: 11px; color: #64748b; border-bottom: 1px solid #1e2d4a; }
+.backend-info span { color: #00e5ff; }
 </style>
 </head>
 <body>
@@ -57,6 +59,10 @@ tbody td { padding: 10px 12px; font-size: 13px; }
     <div class="countdown">Next scan: <span id="cd">60</span>s</div>
     <div class="status-pill"><div class="dot" id="dot"></div><span id="stTxt">Starting</span></div>
   </div>
+</div>
+
+<div class="backend-info">
+  Connected to backend: <span>https://scanner-backend-v756.onrender.com</span>
 </div>
 
 <div class="controls">
@@ -101,11 +107,12 @@ tbody td { padding: 10px 12px; font-size: 13px; }
 </div>
 
 <script>
+const BACKEND = 'https://scanner-backend-v756.onrender.com';
 const RVOL_MIN = 15;
 const VAL_MIN = 120000;
 const AVG_CANDLES = 20;
 const SCAN_SEC = 60;
-let tf = '1m', scanning = false, cdVal = SCAN_SEC, timer = null, results = [];
+let tf = '1m', scanning = false, cdVal = SCAN_SEC, timer = null;
 
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
@@ -136,34 +143,22 @@ async function runScan(){
   hideErr();
   showLoading();
   try {
-    const pairs = await getPairs();
+    const pairRes = await fetch(`${BACKEND}/api/pairs`);
+    if(!pairRes.ok) throw new Error('Backend error: '+pairRes.status);
+    const pairData = await pairRes.json();
+    const pairs = pairData.pairs || [];
+    if(pairs.length===0) throw new Error('No pairs received from backend');
     const signals = await getSignals(pairs);
-    results = signals;
     renderTable(signals, pairs.length);
   } catch(e){
-    showErr('Error: '+e.message+'. Please check your internet connection.');
-    showEmpty('Scan failed. Try clicking Scan Now again.');
+    showErr('Error: '+e.message+'. If this is your first scan, backend may be waking up — wait 30 seconds and try again!');
+    showEmpty('Scan failed. Click Scan Now to retry.');
   }
   scanning = false;
   document.getElementById('scanBtn').disabled = false;
   document.getElementById('sTime').textContent = new Date().toLocaleTimeString('en-IN');
   setStatus('Live','#00e676', true);
   startTimer();
-}
-
-async function getPairs(){
-  const r = await fetch('https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments');
-  if(!r.ok) throw new Error('HTTP '+r.status);
-  const data = await r.json();
-  const seen = new Set();
-  const pairs = [];
-  data.forEach(p=>{
-    const sym = p.pair||p.symbol||'';
-    if(sym.endsWith('USDT') && !seen.has(sym) && (!p.expiry_date||p.contract_type==='perpetual'||p.instrument_type==='perpetual')){
-      seen.add(sym); pairs.push(sym);
-    }
-  });
-  return pairs;
 }
 
 async function getSignals(pairs){
@@ -173,16 +168,18 @@ async function getSignals(pairs){
     const chunk = pairs.slice(i,i+BSZ);
     const res = await Promise.allSettled(chunk.map(p=>checkPair(p)));
     res.forEach(r=>{ if(r.status==='fulfilled'&&r.value) signals.push(r.value); });
-    document.getElementById('sTotal').textContent = Math.min(i+BSZ, pairs.length)+'/'+pairs.length;
+    document.getElementById('sTotal').textContent = Math.min(i+BSZ,pairs.length)+'/'+pairs.length;
     if(i+BSZ<pairs.length) await sleep(200);
   }
-  return signals.sort((a,b)=>b.rvol-a.rvol);
+  const sorted = signals.sort((a,b)=>b.rvol-a.rvol);
+  document.getElementById('sHits').textContent = sorted.length;
+  document.getElementById('sRvol').textContent = sorted.length ? sorted[0].rvol.toFixed(1)+'x' : '—';
+  return sorted;
 }
 
 async function checkPair(pair){
   try {
-    const url = `https://public.coindcx.com/market_data/candles?pair=${encodeURIComponent(pair)}&interval=${tf}&limit=${AVG_CANDLES+5}`;
-    const r = await fetch(url);
+    const r = await fetch(`${BACKEND}/api/candles?pair=${encodeURIComponent(pair)}&interval=${tf}`);
     if(!r.ok) return null;
     const candles = await r.json();
     if(!candles||candles.length<AVG_CANDLES+1) return null;
@@ -199,7 +196,7 @@ async function checkPair(pair){
     const volVal = curVol*close;
     if(rvol<RVOL_MIN||volVal<VAL_MIN||change<=0) return null;
     const symbol = pair.replace(/USDT.*$/,'').replace(/[_-]/g,'');
-    return { symbol, price:close, change, rvol, volVal, volume:curVol };
+    return { symbol, price:close, change, rvol, volVal };
   } catch(e){ return null; }
 }
 
@@ -207,7 +204,10 @@ function renderTable(data, total){
   document.getElementById('sTotal').textContent = total;
   document.getElementById('sHits').textContent = data.length;
   document.getElementById('sRvol').textContent = data.length ? data[0].rvol.toFixed(1)+'x' : '—';
-  if(!data.length){ showEmpty('No signals right now. Market may be calm. Auto-scanning every 60s.'); return; }
+  if(!data.length){
+    showEmpty('No signals right now. Market may be calm. Auto-scanning every 60s.');
+    return;
+  }
   document.getElementById('tBody').innerHTML = data.map(r=>{
     const rClass = r.rvol>=30?'rvol-hot':r.rvol>=20?'rvol-warm':'rvol-ok';
     const inr = (r.volVal*83/1e7).toFixed(2);
@@ -225,7 +225,7 @@ function renderTable(data, total){
 function fmtP(p){ if(p>=1000)return p.toLocaleString('en-US',{maximumFractionDigits:2}); if(p>=1)return p.toFixed(4); if(p>=0.001)return p.toFixed(6); return p.toFixed(8); }
 function fmtL(n){ if(n>=1e9)return(n/1e9).toFixed(2)+'B'; if(n>=1e6)return(n/1e6).toFixed(2)+'M'; if(n>=1e3)return(n/1e3).toFixed(2)+'K'; return n.toFixed(2); }
 function setStatus(t,c,live){ document.getElementById('stTxt').textContent=t; const d=document.getElementById('dot'); d.style.background=c; d.className='dot'+(live?' live':''); }
-function showLoading(){ document.getElementById('tBody').innerHTML=`<tr><td colspan="6"><div class="empty"><div class="empty-icon">⏳</div><div>Scanning ${tf} candles for all futures pairs...</div></div></td></tr>`; }
+function showLoading(){ document.getElementById('tBody').innerHTML=`<tr><td colspan="6"><div class="empty"><div class="empty-icon">⏳</div><div>Scanning ${tf} candles... please wait</div></div></td></tr>`; }
 function showEmpty(m){ document.getElementById('tBody').innerHTML=`<tr><td colspan="6"><div class="empty"><div class="empty-icon">📭</div><div>${m}</div></div></td></tr>`; }
 function showErr(m){ const b=document.getElementById('errBox'); b.textContent=m; b.style.display='block'; }
 function hideErr(){ document.getElementById('errBox').style.display='none'; }
